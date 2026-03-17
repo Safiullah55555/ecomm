@@ -1,0 +1,452 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// prisma/schema.prisma
+// E-Commerce — Production Schema
+// Stack: Next.js + Prisma + PostgreSQL
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  avatarUrl     String?
+  phone         String?
+  role          UserRole  @default(CUSTOMER)
+  passwordHash  String?   // null if using OAuth only
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  accounts      Account[] @relation("accounts")
+  addresses     Address[]
+  orders        Order[]
+  cartItems     CartItem[]
+  wishlistItems WishlistItem[]
+  reviews       Review[]
+  sessions      Session[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  // MANAGER
+}
+
+//  <------------ account for o auth ----------->
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String  // "oauth", "credentials", etc.
+  provider           String  // "google", "github", "discord", etc.
+  providerAccountId  String  // The ID from the OAuth provider
+  
+  // OAuth tokens (optional, for API access)
+  access_token       String?
+  refresh_token      String?
+  expires_at         Int?    // Timestamp when token expires
+  scope              String?
+  
+  user               User    @relation("accounts", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+// <------------Payment(non stripe)------------->
+model Payment {
+  id            String        @id @default(cuid())
+  orderId       String
+  provider      String        // stripe, paypal, bank, jazzcash, etc
+  amount        Int           // in cents
+  currency      String
+  status        PaymentStatus
+  transactionId String?       // gateway transaction id
+  metadata      Json?         // gateway response data
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CATALOG
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Brand {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  slug      String    @unique
+  logoUrl   String?
+  createdAt DateTime  @default(now())
+
+  products  Product[]
+
+  @@map("brands")
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String
+  slug        String     @unique
+  description String?
+  imageUrl    String?
+
+  // Self-relation for nested categories (e.g. Electronics > Phones > Android)
+  parentId    String?
+  parent      Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryTree")
+
+  createdAt   DateTime   @default(now())
+
+  products    ProductCategory[]
+
+  @@map("categories")
+}
+
+model Product {
+  id            String    @id @default(cuid())
+  slug          String    @unique  // used in URL: /products/[slug]
+  name          String
+  description   String?
+  brandId       String
+
+  // Prices stored in cents (integer) to avoid floating-point bugs
+  // e.g. $249.00 → 24900
+  price         Int
+  originalPrice Int?      // set this if product is on sale
+  currency      String    @default("USD")
+
+  // Inventory
+  stockCount    Int       @default(0)
+  maxStock      Int       @default(0)  // initial stock for % bar calculation
+
+  // Display
+  badge         ProductBadge?
+
+  // Denormalized rating cache — updated via background job after each review
+  // Avoids expensive AVG() query on every product listing
+  ratingAvg     Float     @default(0)
+  reviewCount   Int       @default(0)
+
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  brand         Brand     @relation(fields: [brandId], references: [id])
+  categories    ProductCategory[]
+  images        ProductImage[]
+  colors        ProductColor[]
+  specs         ProductSpec[]
+  cartItems     CartItem[]
+  orderItems    OrderItem[]
+  wishlistItems WishlistItem[]
+  reviews       Review[]
+
+  @@map("products")
+}
+
+enum ProductBadge {
+  new
+  sale
+  in_stock
+  out_of_stock
+  best_seller
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  url       String
+  alt       String
+  position  Int      @default(0)  // sort order, 0 = primary image
+
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_images")
+}
+
+model ProductColor {
+  id        String   @id @default(cuid())
+  productId String
+  label     String   // e.g. "Titanium Black"
+  hex       String   // e.g. "#2C2C2A"
+  inStock   Boolean  @default(true)
+
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_colors")
+}
+
+model ProductSpec {
+  id        String   @id @default(cuid())
+  productId String
+  label     String   // e.g. "ANC", "USB-C", "200MP"
+
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_specs")
+}
+
+// Many-to-many: Product <-> Category
+model ProductCategory {
+  productId  String
+  categoryId String
+
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([productId, categoryId])
+  @@map("product_categories")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CART
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CartItem {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  color     String?  // selected color label
+  quantity  Int      @default(1)
+  addedAt   DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // One row per user + product + color combination
+  @@unique([userId, productId, color])
+  @@map("cart_items")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WISHLIST
+// ─────────────────────────────────────────────────────────────────────────────
+
+model WishlistItem {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  addedAt   DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@map("wishlist_items")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORDERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Order {
+  id              String      @id @default(cuid())
+  userId          String
+  status          OrderStatus @default(PENDING)
+
+  // All amounts in cents
+  subtotal        Int         // sum of items before discounts
+  discountAmount  Int         @default(0)
+  shippingAmount  Int         @default(0)
+  taxAmount       Int         @default(0)
+  total           Int         // final amount charged
+
+  currency        String      @default("USD")
+
+  // Shipping address snapshot — denormalized intentionally.
+  // The user's address may change later; the order must stay accurate forever.
+  shippingName    String
+  shippingLine1   String
+  shippingLine2   String?
+  shippingCity    String
+  shippingState   String
+  shippingZip     String
+  shippingCountry String
+
+  // Payment
+  paymentMethod   String?     // e.g. "card", "paypal"
+  paymentIntentId String?     // Stripe PaymentIntent ID
+  paidAt          DateTime?
+
+  notes           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user            User        @relation(fields: [userId], references: [id])
+  items           OrderItem[]
+  payments Payment[] //....
+  statusHistory   OrderStatusHistory[]
+
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING       // created, not yet paid
+  PAID          // payment confirmed
+  PROCESSING    // being prepared
+  SHIPPED       // dispatched
+  DELIVERED     // received by customer
+  CANCELLED
+  REFUNDED
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  productId String
+
+  // Snapshot of product at time of purchase.
+  // Never reference live product fields for order history —
+  // product name/price can change, orders must stay accurate.
+  name      String
+  brand     String
+  imageUrl  String
+  color     String?
+  quantity  Int
+  unitPrice Int     // price per item in cents at time of order
+  total     Int     // unitPrice * quantity
+
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id        String      @id @default(cuid())
+  orderId   String
+  status    OrderStatus
+  note      String?
+  createdAt DateTime    @default(now())
+
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_status_history")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADDRESS BOOK
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Address {
+  id        String   @id @default(cuid())
+  userId    String
+  label     String?  // e.g. "Home", "Office"
+  fullName  String
+  line1     String
+  line2     String?
+  city      String
+  state     String
+  zip       String
+  country   String
+  phone     String?
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("addresses")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REVIEWS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Review {
+  id        String        @id @default(cuid())
+  userId    String
+  productId String
+  rating    Int           // 1–5
+  title     String?
+  body      String?
+  status    ReviewStatus  @default(PENDING)
+  createdAt DateTime      @default(now())
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])  // one review per user per product
+  @@map("reviews")
+}
+
+enum ReviewStatus {
+  PENDING   // awaiting moderation
+  APPROVED
+  REJECTED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DISCOUNTS / COUPONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Coupon {
+  id             String       @id @default(cuid())
+  code           String       @unique
+  type           DiscountType
+  value          Int          // percentage (10 = 10%) or fixed amount in cents
+  minOrderAmount Int?         // minimum cart total required to apply
+  maxUses        Int?         // null = unlimited
+  usedCount      Int          @default(0)
+  expiresAt      DateTime?
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  @@map("coupons")
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+
+
