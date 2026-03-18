@@ -12,12 +12,19 @@ const Navbar = () => {
                         </Link>
                     </div>
                     <div className="flex items-center space-x-4">
-                        <Link href="/userdashboard" className="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition duration-300">
-                            User Dashboard
+                        {/* <Link href="/userdashboard" className="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition duration-300">
+                            
                         </Link>
                         <Link href="/admindashboard" className="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition duration-300">
-                            Admin Dashboard
+                            
+                        </Link> */}
+                        <Link href="/login" className="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition duration-300">
+                            Login
                         </Link>
+                        <Link href="/signup" className="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition duration-300">
+                            Signup
+                        </Link>
+
                     </div>
                 </div>
             </div>
