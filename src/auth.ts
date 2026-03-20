@@ -1,68 +1,168 @@
-import { getServerSession } from "next-auth/next"
-import { PrismaAdapter } from "@auth/prisma-adapter"
-import { prisma } from "@/lib/prisma"
+import NextAuth from "next-auth"
 import Google from "next-auth/providers/google"
-import type { NextAuthOptions } from "next-auth"
-import type { JWT } from "next-auth/jwt"
+import Credentials from "next-auth/providers/credentials"
+import { prisma } from "@/lib/prisma"
+import { loginSchema } from "@/lib/validations/auth"
+import bcrypt from "bcryptjs"
 
-// v4 Session type declaration
-declare module "next-auth" {
-  interface Session {
-    user: {
-      id: string
-      name?: string | null
-      email?: string | null
-      image?: string | null
-    }
-  }
-}
-
-
-
-declare module "next-auth/jwt" {
-  interface JWT {
-    id?: string
-  }
-}
-
-const authConfig: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
+export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Google({
-  clientId: process.env.GOOGLE_CLIENT_ID!,
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+
+    Credentials({
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        try {
+          const parsed = loginSchema.safeParse(credentials)
+          if (!parsed.success) return null
+
+          const { email, password } = parsed.data
+
+          const user = await prisma.user.findUnique({
+            where: { email },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+              passwordHash: true,
+              avatarUrl: true,
+            },
+          })
+
+          if (!user || !user.passwordHash) return null
+
+          const isValid = await bcrypt.compare(password, user.passwordHash)
+          if (!isValid) return null
+
+          return {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            image: user.avatarUrl,
+          }
+        } catch (error) {
+          console.error("[authorize error]in auth.ts", error)
+          return null
+        }
+      },
     }),
   ],
+
   callbacks: {
-    async session({ session, user }) {
-      if (session.user && user.id) {
-        session.user.id = user.id
+    async signIn({ user, account, profile }) {
+      try {
+        // Handle Google OAuth
+        if (account?.provider === "google") {
+          const existingUser = await prisma.user.findUnique({
+            where: { email: user.email! },
+          })
+
+          if (!existingUser) {
+            // Create new user from Google
+            const newUser = await prisma.user.create({
+              data: {
+                email: user.email!,
+                name: user.name,
+                avatarUrl: user.image,
+                emailVerified: new Date(),
+              },
+            })
+
+            // Create account record
+            await prisma.account.create({
+              data: {
+                userId: newUser.id,
+                type: "oauth",
+                provider: "google",
+                providerAccountId: account.providerAccountId,
+                access_token: account.access_token,
+                refresh_token: account.refresh_token,
+                expires_at: account.expires_at,
+                scope: account.scope,
+              },
+            })
+          } else {
+            // Check if account record exists
+            const existingAccount = await prisma.account.findUnique({
+              where: {
+                provider_providerAccountId: {
+                  provider: "google",
+                  providerAccountId: account.providerAccountId,
+                },
+              },
+            })
+
+            if (!existingAccount) {
+              await prisma.account.create({
+                data: {
+                  userId: existingUser.id,
+                  type: "oauth",
+                  provider: "google",
+                  providerAccountId: account.providerAccountId,
+                  access_token: account.access_token,
+                  refresh_token: account.refresh_token,
+                  expires_at: account.expires_at,
+                  scope: account.scope,
+                },
+              })
+            }
+          }
+        }
+        return true
+      } catch (error) {
+        console.error("[signIn callback error]in auth.ts", error)
+        return false
+      }
+    },
+
+    async jwt({ token, user, account }) {
+      // On first sign in, user object is available
+      if (user) {
+        token.id = user.id
+        token.role = (user as any).role
+      }
+
+      // If role not in token, fetch from DB
+      if (!token.role && token.email) {
+        try {
+          const dbUser = await prisma.user.findUnique({
+            where: { email: token.email },
+            select: { id: true, role: true },
+          })
+          if (dbUser) {
+            token.id = dbUser.id
+            token.role = dbUser.role
+          }
+        } catch (error) {
+          console.error("[jwt callback error]in auth.ts", error)
+        }
+      }
+
+      return token
+    },
+
+    async session({ session, token }) {
+      if (token) {
+        session.user.id = token.id as string
+        session.user.role = token.role as string
       }
       return session
     },
-    async jwt({ token, user }) {
-      if (user?.id) {
-        token.id = user.id
-      }
-      return token
-    },
   },
+
   pages: {
-    signIn: "/auth/signin",
-    error: "/auth/error",
+    signIn: "/login",
   },
-}
 
-// Export auth() function for server components like page.tsx
-export async function auth() {
-  return await getServerSession(authConfig)
-}
-
-// Export signIn/signOut for forms/actions
-export { signIn, signOut } from "next-auth/react"
-
-// Handlers for API route
-import NextAuth from "next-auth"
-
-export const handlers = NextAuth(authConfig)
-
+  session: {
+    strategy: "jwt",
+  },
+})
