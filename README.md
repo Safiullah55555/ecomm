@@ -19,5 +19,13 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 
 ## env
+```
+DATABASE_URL=""
+NEXTAUTH_URL="http://localhost:3000"
 
-DATABASE_URL="postgr neon db"......pre sets ...generate prisma etc
+from oAuth:
+
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+
+```
