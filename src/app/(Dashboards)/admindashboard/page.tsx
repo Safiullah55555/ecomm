@@ -1,9 +1,17 @@
+import { auth } from "@/auth"
 
+export default async function AdminDashboardPage() {
+  const session = await auth()
+  
+  if (!session || session.user.role !== 'ADMIN') {
+    return <div>Access denied. Admins only.</div>
+  }
 
-const page = () => {
   return (
-    <div>admin dashboard</div>
+    <div>
+      <h1>Admin Dashboard - Welcome {session.user.name || session.user.email}</h1>
+      <p>Role: ADMIN</p>
+      <div>admin dashboard content here</div>
+    </div>
   )
 }
-
-export default page

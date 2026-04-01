@@ -1,9 +1,17 @@
-import React from 'react'
+import { auth } from "@/auth"
 
-const page = () => {
+export default async function UserDashboardPage() {
+  const session = await auth()
+  
+  if (!session) {
+    return <div>Please log in to access user dashboard.</div>
+  }
+
   return (
-    <div>user dashboard</div>
+    <div>
+      <h1>User Dashboard - Welcome {session.user.name || session.user.email}</h1>
+      <p>Role: {session.user.role}</p>
+      <div>user dashboard content here</div>
+    </div>
   )
 }
-
-export default page
