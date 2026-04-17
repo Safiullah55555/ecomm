@@ -9,19 +9,19 @@ import ProductCardSkeleton from './api/ProductCardSkeleton'
 import ProductGridClient from './api/ProductGridClient'
 
 interface ProductGridProps {
-  categoryId?: string
+  category?: string
   page?: number
   perPage?: number
 }
 
 // ── Server-side data fetcher ───────────────────────────────────────────────────
 async function getProducts(params: ProductGridProps): Promise<Product[]> {
-  const { categoryId, page = 1, perPage = 12 } = params
+  const { category, page = 1, perPage = 12 } = params
 
   const url = new URL('/api/products', 'http://localhost:3000')
-  if (categoryId) url.searchParams.set('categoryId', categoryId)
+  if (category) url.searchParams.set('category', category)
   url.searchParams.set('page', String(page))
-  url.searchParams.set('perPage', String(perPage))
+  url.searchParams.set('limit', String(perPage))
 
   const res = await fetch(url.toString(), {
     // Cache for 60s, revalidate in background (ISR-style)
